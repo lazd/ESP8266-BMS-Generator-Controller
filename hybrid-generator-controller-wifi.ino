@@ -44,6 +44,10 @@ unsigned long lastGeneratorStartTryTime = 0;
 unsigned long generatorCooldownStartTime = 0;
 unsigned long signalStartTime = 0;
 
+// Status variables
+float packVoltage = 0;
+float packSOC = 0;
+
 void setup() {
   // This is needed to print stuff to the serial monitor
   Serial.begin(115200);
@@ -172,12 +176,16 @@ void generatorCooldownLoop() {
   }
 }
 
+void cancelGeneratorStartRequest() {
+  generatorStartRequested = false;
+  lastGeneratorStartTryTime = 0;
+  generatorStartTries = 0;
+}
+
 void generatorStartLoop() {
   if (generatorStartRequested && generatorOn) {
     // Generator successfully started
-    generatorStartRequested = false;
-    lastGeneratorStartTryTime = 0;
-    generatorStartTries = 0;
+    cancelGeneratorStartRequest();
     Serial.println("Generator start request successful");
     return;
   }
@@ -200,32 +208,36 @@ void generatorStartLoop() {
   }
 }
 
+void printWebStatus(WiFiClient client, String item, String status) {
+  client.print("<p><stong>" + item + ":</strong> " + status + "</p>");
+}
+
 void serverLoop() {
   // Check if a client has connected
   WiFiClient client = server.accept();
-  if (!client) { return; }
-  Serial.println(F("new client"));
+
+  if (!client) {
+    return;
+  }
 
   client.setTimeout(5000);  // default is 1000
 
   // Read the first line of the request
   String req = client.readStringUntil('\r');
-  Serial.println(F("request: "));
   Serial.println(req);
 
   // Match the request
-  int val;
-  if (req.indexOf(F("/generator/on")) != -1) {
-    val = LOW;
-  } else if (req.indexOf(F("/generator/off")) != -1) {
-    val = HIGH;
-  } else {
-    Serial.println(F("invalid request"));
-    val = digitalRead(LED_BUILTIN);
+  if (req.indexOf("/generator/on") != -1) {
+    requestStartGenerator();
+  } else if (req.indexOf("/generator/off") != -1) {
+    requestStopGenerator();
+  } else if (req.indexOf("/generator/cancel") != -1) {
+    cancelGeneratorStartRequest();
+  } else if (req.indexOf("favicon.svg") != -1) {
+    client.print("HTTP/1.1 200 OK\r\nContent-Type: image/svg+xml\r\n\r\n");
+    client.print("<svg fill='#FFFF00' width='76' height='76' viewBox='0 0 560.317 560.316' xmlns='http://www.w3.org/2000/svg'><path d='M207.523,560.316c0,0,194.42-421.925,194.444-421.986l10.79-23.997c-41.824,12.02-135.271,34.902-135.57,35.833C286.96,122.816,329.017,0,330.829,0c-39.976,0-79.952,0-119.927,0l-12.167,57.938l-51.176,209.995l135.191-36.806L207.523,560.316z'/></svg>");
+    return;
   }
-
-  // Set LED according to the request
-  digitalWrite(LED_BUILTIN, val);
 
   // read/ignore the rest of the request
   // do not client.flush(): it is for output only, see below
@@ -237,18 +249,29 @@ void serverLoop() {
   // Send the response to the client
   // it is OK for multiple small client.print/write,
   // because nagle algorithm will group them into one single packet
-  client.print(F("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<!DOCTYPE HTML>\r\n<html>\r\nGPIO is now "));
-  client.print((val) ? F("OFF") : F("ON"));
-  client.print(F("<br><br>Click <a href='http://"));
-  client.print(WiFi.localIP());
-  client.print(F("/generator/on'>here</a> to switch LED GPIO on, or <a href='http://"));
-  client.print(WiFi.localIP());
-  client.print(F("/generator/off'>here</a> to switch LED GPIO off.</html>"));
+  client.print("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n");
+  client.print("<!DOCTYPE HTML>");
+  client.print("<html>");
+  client.print("<head><link rel='icon' href='/favicon.svg'></head>");
+  client.print("<body>");
 
-  // The client will actually be *flushed* then disconnected
-  // when the function returns and 'client' object is destroyed (out-of-scope)
-  // flush = ensure written data are received by the other side
-  Serial.println(F("Disconnecting from client"));
+  printWebStatus(client, "Batteries", (String)packVoltage + "V " + "("+ (String)packSOC + "%)");
+  printWebStatus(client, "Grid power", (String)(gridPowerOn ? "ON" : "OFF"));
+  printWebStatus(client, "Generator", (String)(generatorOn ? "ON" : "OFF"));
+
+  printWebStatus(client, "Stop requested", (String)(generatorStopRequested ? "YES" : "NO"));
+  printWebStatus(client, "Start requested", (String)(generatorStartRequested ? "YES" : "NO"));
+  printWebStatus(client, "Start tries", (String)generatorStartTries);
+
+  const String generatorActionLabel = (generatorOn ? "off" : "on");
+  if (!generatorStartRequested) {
+    client.print("<button onclick='window.location=\"/generator/" + generatorActionLabel + "\"'>Turn generator " + generatorActionLabel + "</button>");
+  }
+  else {
+    client.print("<button onclick='window.location=\"/generator/cancel\"'>Cancel generator start request</button>");
+  }
+
+  client.print("<body></html>");
 }
 
 void loop() {
@@ -256,25 +279,29 @@ void loop() {
   bool communicationStatus = bms.update();
 
   // Don't do anything if we have no data
+  /*
   if (!communicationStatus) {
     Serial.println("Failed to communicate with BMS, waiting...");
     blinkLED(5);
     delay(5000);
     return;
   }
+  */
 
-  float packVoltage = bms.get.packVoltage;
-  float packSOC = bms.get.packSOC;
+  packVoltage = bms.get.packVoltage;
+  packSOC = bms.get.packSOC;
 
   // Get grid and generator status
-  generatorOn = digitalRead(GENERATOR_POWER_PIN) == LOW;
-  gridPowerOn = digitalRead(GRID_POWER_PIN) == LOW;
+  generatorOn = digitalRead(GENERATOR_POWER_PIN) == HIGH;
+  gridPowerOn = digitalRead(GRID_POWER_PIN) == HIGH;
 
+  /*
   Serial.println("Grid power: " + (String)(gridPowerOn ? "ON" : "OFF"));
   Serial.println("Generator:  " + (String)(generatorOn ? "ON" : "OFF"));
   Serial.println("Cooldown:   " + (String)(generatorStopRequested ? "YES" : "NO"));
   Serial.println("Button:     " + (String)(startStopButtonPressed ? "ON" : "OFF"));
   Serial.println("Batteries:  " + (String)packVoltage + "V " + "("+ (String)packSOC + "%)");
+  */
 
   if (gridPowerOn) {
     if (generatorOn && !generatorStopRequested) {
@@ -304,6 +331,4 @@ void loop() {
   serverLoop();
 
   Serial.println("");
-
-  delay(SAMPLE_SPEED);
 }
