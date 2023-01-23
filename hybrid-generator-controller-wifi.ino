@@ -42,6 +42,7 @@ Daly_BMS_UART bms(BMS_SERIAL);
 WiFiServer server(80);
 
 // State variables
+bool bmsCommunicationStatus = false;
 bool generatorOn = false;
 bool gridPowerOn = false;
 bool startStopButtonPressed = false;
@@ -52,10 +53,9 @@ unsigned long lastGeneratorStartTryTime = 0;
 unsigned long generatorCooldownStartTime = 0;
 unsigned long signalStartTime = 0;
 
-// Status variables
-float packVoltage = 0;
-float packSOC = 0;
-String chargeDischargeStatus = "0";
+unsigned long gridPowerLostTime = 0;
+unsigned long gridPowerRestoredTime = 0;
+unsigned long generatorStartTime = 0;
 
 void setup() {
   // This is needed to print stuff to the serial monitor
@@ -142,6 +142,8 @@ bool stopGenerator() {
 
   generatorStopRequested = false;
 
+  generatorStartTime = 0;
+
   return true;
 }
 
@@ -200,6 +202,7 @@ void generatorStartLoop() {
     // Generator successfully started
     cancelGeneratorStartRequest();
     Serial.println("Generator start request successful");
+    generatorStartTime = timeClient.getEpochTime();
     return;
   }
 
@@ -253,23 +256,18 @@ void serverLoop() {
     client.print("HTTP/1.1 200 OK\r\nContent-Type: image/svg+xml\r\n\r\n");
     client.print("<svg fill='#FFFF00' width='76' height='76' viewBox='0 0 560.317 560.316' xmlns='http://www.w3.org/2000/svg'><path d='M207.523,560.316c0,0,194.42-421.925,194.444-421.986l10.79-23.997c-41.824,12.02-135.271,34.902-135.57,35.833C286.96,122.816,329.017,0,330.829,0c-39.976,0-79.952,0-119.927,0l-12.167,57.938l-51.176,209.995l135.191-36.806L207.523,560.316z'/></svg>");
   } else if (req.indexOf("api/data.json") != -1) {
-    int chargeDischargeInt = 0;
-    if (chargeDischargeStatus == "1") {
-      chargeDischargeInt = 1;
+    int chargeDischargeInt = -1;
+    if (bmsCommunicationStatus) {
+      if (bms.get.chargeDischargeStatus == "1") {
+        chargeDischargeInt = 1;
+      }
+      else if (bms.get.chargeDischargeStatus == "2") {
+        chargeDischargeInt = 2;
+      }
+      else {
+        chargeDischargeInt = 0;
+      }
     }
-    else if (chargeDischargeStatus == "2") {
-      chargeDischargeInt = 2;
-    }
-
-    JSONVar cellVoltages;
-    cellVoltages[0] = bms.get.cellVmV[0];
-    cellVoltages[1] = bms.get.cellVmV[1];
-    cellVoltages[2] = bms.get.cellVmV[2];
-    cellVoltages[3] = bms.get.cellVmV[3];
-    cellVoltages[4] = bms.get.cellVmV[4];
-    cellVoltages[5] = bms.get.cellVmV[5];
-    cellVoltages[6] = bms.get.cellVmV[6];
-    cellVoltages[7] = bms.get.cellVmV[7];
 
     JSONVar data;
     data["time"] = timeClient.getEpochTime();
@@ -278,20 +276,25 @@ void serverLoop() {
     data["packVoltage"] = bms.get.packVoltage;
     data["chargeDischargeStatus"] = chargeDischargeInt;
     data["cellBalanceActive"] = bms.get.cellBalanceActive;
-
     data["resCapacitymAh"] = bms.get.resCapacitymAh; // residual capacity mAH
-
-    data["cellVoltages"] = cellVoltages;
     data["maxCellmV"] = bms.get.maxCellmV; // maximum monomer voltage (mV)
     data["maxCellVNum"] = bms.get.maxCellVNum; // Maximum Unit Voltage cell No.
     data["minCellmV"] = bms.get.minCellmV; // minimum monomer voltage (mV)
     data["minCellVNum"] = bms.get.minCellVNum; // Minimum Unit Voltage cell No.
-    data["cellDiff"] = bms.get.cellDiff; // difference betwen cells
+    data["cellDiff"] = bms.get.cellDiff; // difference between cells
+    data["numberOfCells"] = bms.get.numberOfCells; // difference between cells
 
+    data["bmsCommunicationStatus"] = bmsCommunicationStatus;
     data["generatorOn"] = generatorOn;
     data["gridPowerOn"] = gridPowerOn;
     data["generatorStartRequested"] = generatorStartRequested;
     data["generatorStartTries"] = generatorStartTries;
+
+    JSONVar cellVoltages;
+    for (int i = 0; i < bms.get.numberOfCells; i++) {
+      cellVoltages[i] = bms.get.cellVmV[i];
+    }
+    data["cellVoltages"] = cellVoltages;
 
     JSONVar alarms;
     if (bms.alarm.levelOneCellVoltageTooHigh) alarms["levelOneCellVoltageTooHigh"] = true;
@@ -359,15 +362,20 @@ void serverLoop() {
 
     client.print(timeClient.getFormattedTime());
 
-    String chargeDischargeString = "Standby";
-    if (bms.get.chargeDischargeStatus == "1") {
-      chargeDischargeString = "Charging";
-    }
-    else if (bms.get.chargeDischargeStatus == "2") {
-      chargeDischargeString = "Discharging";
+    String chargeDischargeString = "No communication";
+    if (bmsCommunicationStatus) {
+      if (bms.get.chargeDischargeStatus == "1") {
+        chargeDischargeString = "Charging";
+      }
+      else if (bms.get.chargeDischargeStatus == "2") {
+        chargeDischargeString = "Discharging";
+      }
+      else {
+        chargeDischargeString = "Standby";
+      }
     }
 
-    printWebStatus(client, "Batteries", (String)packVoltage + "V " + "("+ (String)packSOC + "%)");
+    printWebStatus(client, "Batteries", (String)bms.get.packVoltage + "V " + "("+ (String)bms.get.packSOC + "%)");
     printWebStatus(client, "Inverter status", chargeDischargeString);
     printWebStatus(client, "Grid power", (String)(gridPowerOn ? "ON" : "OFF"));
     printWebStatus(client, "Generator", (String)(generatorOn ? "ON" : "OFF"));
@@ -397,11 +405,11 @@ void serverLoop() {
 
 void loop() {
   // Get BMS data
-  bool communicationStatus = bms.update();
+  bmsCommunicationStatus = bms.update();
 
   // Don't do anything if we have no data
   /*
-  if (!communicationStatus) {
+  if (!bmsCommunicationStatus) {
     Serial.println("Failed to communicate with BMS, waiting...");
     blinkLED(5);
     delay(5000);
@@ -409,39 +417,42 @@ void loop() {
   }
   */
 
-  packVoltage = bms.get.packVoltage;
-  packSOC = bms.get.packSOC;
-  chargeDischargeStatus = bms.get.chargeDischargeStatus;
-
   // Get grid and generator status
   generatorOn = digitalRead(GENERATOR_POWER_PIN) == HIGH;
   gridPowerOn = digitalRead(GRID_POWER_PIN) == HIGH;
 
-  /*
-  Serial.println("Grid power: " + (String)(gridPowerOn ? "ON" : "OFF"));
-  Serial.println("Generator:  " + (String)(generatorOn ? "ON" : "OFF"));
-  Serial.println("Cooldown:   " + (String)(generatorStopRequested ? "YES" : "NO"));
-  Serial.println("Button:     " + (String)(startStopButtonPressed ? "ON" : "OFF"));
-  Serial.println("Batteries:  " + (String)packVoltage + "V " + "("+ (String)packSOC + "%)");
-  */
-
   if (gridPowerOn) {
+    if (gridPowerLostTime != 0) {
+      gridPowerRestoredTime = timeClient.getEpochTime();
+      gridPowerLostTime = 0;
+    }
+
     if (generatorOn && !generatorStopRequested) {
       Serial.println("Grid power restored");
       requestStopGenerator();
     }
   }
   else {
-    if (packSOC < BATTERY_MINIMUM_SOC) {
-      if (!generatorOn && !generatorStartRequested) {
-        Serial.println("Batteries need charging");
-        requestStartGenerator();
-      }
+    if (gridPowerLostTime == 0) {
+      gridPowerLostTime = timeClient.getEpochTime();
+      gridPowerRestoredTime = 0;
     }
-    else if (packSOC == BATTERY_MAXIMUM_SOC) {
-      if (generatorOn && !generatorStopRequested) {
-        Serial.println("Batteries are fully charged");
-        requestStopGenerator();
+
+    if (bmsCommunicationStatus) {
+      int packSOC = bms.get.packSOC;
+
+      // Don't do anything if we're not communicating properly with the BMS
+      if (packSOC < BATTERY_MINIMUM_SOC) {
+        if (!generatorOn && !generatorStartRequested) {
+          Serial.println("Batteries need charging");
+          requestStartGenerator();
+        }
+      }
+      else if (packSOC == BATTERY_MAXIMUM_SOC) {
+        if (generatorOn && !generatorStopRequested) {
+          Serial.println("Batteries are fully charged");
+          requestStopGenerator();
+        }
       }
     }
   }
