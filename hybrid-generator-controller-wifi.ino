@@ -1,14 +1,14 @@
-#include <Arduino.h>
 #include <daly-bms-uart.h>
+#include <ESP8266WiFi.h>
+
+#define STASSID "davisRouter"
+#define STAPSK "0192837465"
 
 #define BMS_SERIAL Serial1 // Set the serial port for communication with the Daly BMS
 
-#define TX_LED 30
-#define RX_LED 17
-
-#define GENERATOR_SIGNAL_PIN 9
-#define GRID_POWER_PIN 16
-#define GENERATOR_POWER_PIN 10
+#define GENERATOR_SIGNAL_PIN 18
+#define GRID_POWER_PIN 19
+#define GENERATOR_POWER_PIN 20
 
 #define MAX_GENERATOR_START_TRIES 5
 
@@ -20,8 +20,18 @@
 #define BATTERY_MINIMUM_SOC 15 // 15%
 #define BATTERY_MAXIMUM_SOC 100 // 100%
 
-// Constructing the bms driver and passing in the Serial interface (which pins to use)
+#define LED_ON LOW
+#define LED_OFF HIGH
+
+const char* ssid = STASSID;
+const char* password = STAPSK;
+
+// Construct the bms driver and passing in the Serial interface (which pins to use)
 Daly_BMS_UART bms(BMS_SERIAL);
+
+// Create an instance of the server
+// specify the port to listen on as an argument
+WiFiServer server(80);
 
 // State variables
 bool generatorOn = false;
@@ -34,12 +44,47 @@ unsigned long lastGeneratorStartTryTime = 0;
 unsigned long generatorCooldownStartTime = 0;
 unsigned long signalStartTime = 0;
 
-bool startStopButtonLoop() {
-  if (startStopButtonPressed) {
-    if ((millis() - signalStartTime) >= SIGNAL_TIME) {
-      digitalWrite(GENERATOR_SIGNAL_PIN, LOW); // Release the button 
-      startStopButtonPressed = false; 
-    }
+void setup() {
+  // This is needed to print stuff to the serial monitor
+  Serial.begin(115200);
+
+  Serial.print(F("Connecting to "));
+  Serial.println(ssid);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(F("."));
+  }
+  Serial.println();
+  Serial.println(F("WiFi connected"));
+
+  // Start the server
+  server.begin();
+  Serial.println(F("Server started"));
+
+  // Print the IP address
+  Serial.println(WiFi.localIP());
+
+  // Pin setup
+  pinMode(GENERATOR_SIGNAL_PIN, OUTPUT);
+  pinMode(GRID_POWER_PIN, INPUT_PULLUP);
+  pinMode(GENERATOR_POWER_PIN, INPUT_PULLUP);
+
+  pinMode(LED_BUILTIN, OUTPUT);
+
+  // This call sets up the driver
+  bms.Init();
+}
+
+void blinkLED(int times, int waitTime = 250) {
+  for (int i = 0; i < times; i++) {
+    digitalWrite(LED_BUILTIN, LED_OFF);
+    delay(waitTime);
+    digitalWrite(LED_BUILTIN, LED_ON);
+    delay(waitTime);
   }
 }
 
@@ -100,6 +145,23 @@ bool requestStopGenerator() {
   return true;
 }
 
+bool requestStartGenerator() {
+  if (!generatorStartRequested) {
+    generatorStartRequested = true;
+    return true;
+  }
+  return false;
+}
+
+void startStopButtonLoop() {
+  if (startStopButtonPressed) {
+    if ((millis() - signalStartTime) >= SIGNAL_TIME) {
+      digitalWrite(GENERATOR_SIGNAL_PIN, LOW); // Release the button 
+      startStopButtonPressed = false; 
+    }
+  }
+}
+
 void generatorCooldownLoop() {
   if (generatorStopRequested) {
     // We've cooled down enough, stop the generator
@@ -107,12 +169,6 @@ void generatorCooldownLoop() {
       Serial.println("Generator cool down complete");
       stopGenerator();
     }
-  }
-}
-
-bool requestStartGenerator() {
-  if (!generatorStartRequested) {
-    generatorStartRequested = true;
   }
 }
 
@@ -144,37 +200,58 @@ void generatorStartLoop() {
   }
 }
 
-void setup()
-{
-  // This is needed to print stuff to the serial monitor
-  Serial.begin(115200);
+void serverLoop() {
+  // Check if a client has connected
+  WiFiClient client = server.accept();
+  if (!client) { return; }
+  Serial.println(F("new client"));
 
-  pinMode(GENERATOR_SIGNAL_PIN, OUTPUT);
-  pinMode(GRID_POWER_PIN, INPUT_PULLUP);
-  pinMode(GENERATOR_POWER_PIN, INPUT_PULLUP);
+  client.setTimeout(5000);  // default is 1000
 
-  pinMode(TX_LED, OUTPUT);
-  pinMode(RX_LED, OUTPUT);
+  // Read the first line of the request
+  String req = client.readStringUntil('\r');
+  Serial.println(F("request: "));
+  Serial.println(req);
 
-  // This call sets up the driver
-  bms.Init();
-
-  delay(2000);
-}
-
-void blinkLED(int times, int waitTime = 250) {
-  for (int i = 0; i < times; i++) {
-    digitalWrite(RX_LED, LOW);
-    delay(waitTime);
-    digitalWrite(RX_LED, HIGH);
-    delay(waitTime);
+  // Match the request
+  int val;
+  if (req.indexOf(F("/generator/on")) != -1) {
+    val = LOW;
+  } else if (req.indexOf(F("/generator/off")) != -1) {
+    val = HIGH;
+  } else {
+    Serial.println(F("invalid request"));
+    val = digitalRead(LED_BUILTIN);
   }
+
+  // Set LED according to the request
+  digitalWrite(LED_BUILTIN, val);
+
+  // read/ignore the rest of the request
+  // do not client.flush(): it is for output only, see below
+  while (client.available()) {
+    // byte by byte is not very efficient
+    client.read();
+  }
+
+  // Send the response to the client
+  // it is OK for multiple small client.print/write,
+  // because nagle algorithm will group them into one single packet
+  client.print(F("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<!DOCTYPE HTML>\r\n<html>\r\nGPIO is now "));
+  client.print((val) ? F("OFF") : F("ON"));
+  client.print(F("<br><br>Click <a href='http://"));
+  client.print(WiFi.localIP());
+  client.print(F("/generator/on'>here</a> to switch LED GPIO on, or <a href='http://"));
+  client.print(WiFi.localIP());
+  client.print(F("/generator/off'>here</a> to switch LED GPIO off.</html>"));
+
+  // The client will actually be *flushed* then disconnected
+  // when the function returns and 'client' object is destroyed (out-of-scope)
+  // flush = ensure written data are received by the other side
+  Serial.println(F("Disconnecting from client"));
 }
 
-void loop()
-{
-  digitalWrite(RX_LED, LOW);
-
+void loop() {
   // Get BMS data
   bool communicationStatus = bms.update();
 
@@ -224,9 +301,9 @@ void loop()
   generatorStartLoop();
   generatorCooldownLoop();
   startStopButtonLoop();
+  serverLoop();
 
   Serial.println("");
 
   delay(SAMPLE_SPEED);
-  digitalWrite(RX_LED, HIGH);
 }
