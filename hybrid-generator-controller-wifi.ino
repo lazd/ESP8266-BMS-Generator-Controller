@@ -56,6 +56,7 @@ unsigned long signalStartTime = 0;
 unsigned long gridPowerLostTime = 0;
 unsigned long gridPowerRestoredTime = 0;
 unsigned long generatorStartTime = 0;
+unsigned long generatorStopTime = 0;
 
 void setup() {
   // This is needed to print stuff to the serial monitor
@@ -143,6 +144,7 @@ bool stopGenerator() {
   generatorStopRequested = false;
 
   generatorStartTime = 0;
+  generatorStopTime = timeClient.getEpochTime();
 
   return true;
 }
@@ -203,6 +205,7 @@ void generatorStartLoop() {
     cancelGeneratorStartRequest();
     Serial.println("Generator start request successful");
     generatorStartTime = timeClient.getEpochTime();
+    generatorStopTime = 0;
     return;
   }
 
@@ -289,6 +292,11 @@ void serverLoop() {
     data["gridPowerOn"] = gridPowerOn;
     data["generatorStartRequested"] = generatorStartRequested;
     data["generatorStartTries"] = generatorStartTries;
+
+    data["gridPowerLostTime"] = gridPowerLostTime;
+    data["gridPowerRestoredTime"] = gridPowerRestoredTime;
+    data["generatorStartTime"] = generatorStartTime;
+    data["generatorStopTime"] = generatorStopTime;
 
     JSONVar cellVoltages;
     for (int i = 0; i < bms.get.numberOfCells; i++) {
