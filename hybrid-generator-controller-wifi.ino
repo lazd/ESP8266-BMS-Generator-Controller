@@ -277,6 +277,7 @@ void serverLoop() {
     data["bmsCycles"] = bms.get.bmsCycles;
     data["packSOC"] = bms.get.packSOC;
     data["packVoltage"] = bms.get.packVoltage;
+    data["packCurrent"] = bms.get.packCurrent;
     data["chargeDischargeStatus"] = chargeDischargeInt;
     data["cellBalanceActive"] = bms.get.cellBalanceActive;
     data["resCapacitymAh"] = bms.get.resCapacitymAh; // residual capacity mAH
@@ -291,6 +292,7 @@ void serverLoop() {
     data["generatorOn"] = generatorOn;
     data["gridPowerOn"] = gridPowerOn;
     data["generatorStartRequested"] = generatorStartRequested;
+    data["generatorStopRequested"] = generatorStopRequested;
     data["generatorStartTries"] = generatorStartTries;
 
     data["gridPowerLostTime"] = gridPowerLostTime;
