@@ -1,0 +1,14 @@
+{
+  "name": "hybrid-generator-controller-wifi",
+  "version": "1.0.0",
+  "description": "A generator controller",
+  "main": "index.js",
+  "scripts": {
+    "build": "./compile.sh"
+  },
+  "author": "Larry Davis <lazdnet@gmail.com>",
+  "license": "BSD-2-Clause",
+  "devDependencies": {
+    "html-minifier": "^4.0.0"
+  }
+}

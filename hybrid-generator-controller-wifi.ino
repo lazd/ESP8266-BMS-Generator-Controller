@@ -3,6 +3,7 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <JSON.h>
+#include "site/html.h"
 
 #define STASSID "davisRouter"
 #define STAPSK "0192837465"
@@ -18,7 +19,6 @@
 
 #define GENERATOR_START_RETRY_TIME 30000 // 0.5 * 60 * 100 // 30 seconds
 #define GENERATOR_COOLDOWN_TIME 300000 // 300000 // 5 * 60 * 1000 // 5 minutes
-#define SAMPLE_SPEED 200
 #define SIGNAL_TIME 399
 
 #define BATTERY_MINIMUM_SOC 15 // 15%
@@ -227,10 +227,6 @@ void generatorStartLoop() {
   }
 }
 
-void printWebStatus(WiFiClient client, String item, String status) {
-  client.print("<p><stong>" + item + ":</strong> " + status + "</p>");
-}
-
 void serverLoop() {
   // Check if a client has connected
   WiFiClient client = server.accept();
@@ -365,44 +361,7 @@ void serverLoop() {
     // it is OK for multiple small client.print/write,
     // because nagle algorithm will group them into one single packet
     client.print("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n");
-    client.print("<!DOCTYPE HTML>");
-    client.print("<html>");
-    client.print("<head><link rel='icon' href='/favicon.svg'><meta charset='utf8'></head>");
-    client.print("<body>");
-
-    client.print(timeClient.getFormattedTime());
-
-    String chargeDischargeString = "No communication";
-    if (bmsCommunicationStatus) {
-      if (bms.get.chargeDischargeStatus == "1") {
-        chargeDischargeString = "Charging";
-      }
-      else if (bms.get.chargeDischargeStatus == "2") {
-        chargeDischargeString = "Discharging";
-      }
-      else {
-        chargeDischargeString = "Standby";
-      }
-    }
-
-    printWebStatus(client, "Batteries", (String)bms.get.packVoltage + "V " + "("+ (String)bms.get.packSOC + "%)");
-    printWebStatus(client, "Inverter status", chargeDischargeString);
-    printWebStatus(client, "Grid power", (String)(gridPowerOn ? "ON" : "OFF"));
-    printWebStatus(client, "Generator", (String)(generatorOn ? "ON" : "OFF"));
-
-    printWebStatus(client, "Stop requested", (String)(generatorStopRequested ? "YES" : "NO"));
-    printWebStatus(client, "Start requested", (String)(generatorStartRequested ? "YES" : "NO"));
-    printWebStatus(client, "Start tries", (String)generatorStartTries);
-
-    const String generatorActionLabel = (generatorOn ? "off" : "on");
-    if (!generatorStartRequested) {
-      client.print("<button onclick='window.location=\"/generator/" + generatorActionLabel + "\"'>Turn generator " + generatorActionLabel + "</button>");
-    }
-    else {
-      client.print("<button onclick='window.location=\"/generator/cancel\"'>Cancel generator start request</button>");
-    }
-
-    client.print("<body></html>");
+    client.print(String(reinterpret_cast<char*>(site_index_min_html)));
   }
 
   // read/ignore the rest of the request
