@@ -5,21 +5,22 @@
 #include <JSON.h>
 #include "site/html.h"
 
-#define STASSID "davisRouter"
+#define STASSID "davisRouterLegacy"
 #define STAPSK "0192837465"
 #define UTCOFFSETINSECONDS 8 * -3600
 
-#define BMS_SERIAL Serial1 // Set the serial port for communication with the Daly BMS
+#define BMS_SERIAL Serial // Set the serial port for communication with the Daly BMS
 
-#define GENERATOR_SIGNAL_PIN 18
-#define GRID_POWER_PIN 19
-#define GENERATOR_POWER_PIN 20
+#define GENERATOR_SIGNAL_PIN 5
+#define INVERTER_POWER_PIN 14
+#define GRID_POWER_PIN 12
+#define GENERATOR_POWER_PIN 13
 
 #define MAX_GENERATOR_START_TRIES 5
 
 #define GENERATOR_START_RETRY_TIME 30000 // 0.5 * 60 * 100 // 30 seconds
 #define GENERATOR_COOLDOWN_TIME 300000 // 300000 // 5 * 60 * 1000 // 5 minutes
-#define SIGNAL_TIME 399
+#define SIGNAL_TIME 2000
 
 #define BATTERY_MINIMUM_SOC 15 // 15%
 #define BATTERY_MAXIMUM_SOC 100 // 100%
@@ -45,6 +46,7 @@ WiFiServer server(80);
 bool bmsCommunicationStatus = false;
 bool generatorOn = false;
 bool gridPowerOn = false;
+bool inverterOn = false;
 bool startStopButtonPressed = false;
 bool generatorStopRequested = false;
 bool generatorStartRequested = false;
@@ -58,22 +60,29 @@ unsigned long gridPowerRestoredTime = 0;
 unsigned long generatorStartTime = 0;
 unsigned long generatorStopTime = 0;
 
-void setup() {
-  // This is needed to print stuff to the serial monitor
-  Serial.begin(115200);
+String htmlString = String(reinterpret_cast<char*>(site_index_min_html));
 
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
+void setup() {
+  // Pin setup
+  pinMode(GENERATOR_SIGNAL_PIN, OUTPUT);
+  pinMode(INVERTER_POWER_PIN, INPUT_PULLUP);
+  pinMode(GRID_POWER_PIN, INPUT_PULLUP);
+  pinMode(GENERATOR_POWER_PIN, INPUT_PULLUP);
+
+  pinMode(LED_BUILTIN, OUTPUT);
+
+  // Serial.print("Connecting to ");
+  // Serial.println(ssid);
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    Serial.print(".");
+    // Serial.print(".");
   }
-  Serial.println();
-  Serial.println("WiFi connected");
+  // Serial.println();
+  // Serial.println("WiFi connected");
 
   // Update the time
   timeClient.begin();
@@ -81,17 +90,10 @@ void setup() {
 
   // Start the server
   server.begin();
-  Serial.println("Server started");
+  // Serial.println("Server started");
 
   // Print the IP address
-  Serial.println(WiFi.localIP());
-
-  // Pin setup
-  pinMode(GENERATOR_SIGNAL_PIN, OUTPUT);
-  pinMode(GRID_POWER_PIN, INPUT_PULLUP);
-  pinMode(GENERATOR_POWER_PIN, INPUT_PULLUP);
-
-  pinMode(LED_BUILTIN, OUTPUT);
+  // Serial.println(WiFi.localIP());
 
   // This call sets up the driver
   bms.Init();
@@ -112,7 +114,7 @@ bool pressStartStopButton() {
   }
 
   startStopButtonPressed = true;
-  digitalWrite(GENERATOR_SIGNAL_PIN, HIGH); // Press the button  
+  digitalWrite(GENERATOR_SIGNAL_PIN, LED_ON); // Press the button  
   signalStartTime = millis();
 
   return true;
@@ -123,7 +125,7 @@ bool startGenerator() {
     return false;
   }
 
-  Serial.println("Starting generator");
+  // Serial.println("Starting generator");
 
   // Power generator on
   pressStartStopButton();
@@ -136,7 +138,7 @@ bool stopGenerator() {
     return false;
   }
 
-  Serial.println("Stopping generator");
+  // Serial.println("Stopping generator");
 
   // Stop generator
   pressStartStopButton();
@@ -158,7 +160,7 @@ bool requestStopGenerator() {
     return false;
   }
 
-  Serial.println("Cooling down generator");
+  // Serial.println("Cooling down generator");
 
   generatorStopRequested = true;
   generatorCooldownStartTime = millis();
@@ -177,17 +179,21 @@ bool requestStartGenerator() {
 void startStopButtonLoop() {
   if (startStopButtonPressed) {
     if ((millis() - signalStartTime) >= SIGNAL_TIME) {
-      digitalWrite(GENERATOR_SIGNAL_PIN, LOW); // Release the button 
+      digitalWrite(GENERATOR_SIGNAL_PIN, LED_OFF); // Release the button 
       startStopButtonPressed = false; 
     }
   }
 }
 
 void generatorCooldownLoop() {
+  if (!generatorOn) {
+    generatorStopRequested = false;
+  }
+
   if (generatorStopRequested) {
     // We've cooled down enough, stop the generator
     if ((millis() - generatorCooldownStartTime) >= GENERATOR_COOLDOWN_TIME) {
-      Serial.println("Generator cool down complete");
+      // Serial.println("Generator cool down complete");
       stopGenerator();
     }
   }
@@ -203,7 +209,7 @@ void generatorStartLoop() {
   if (generatorStartRequested && generatorOn) {
     // Generator successfully started
     cancelGeneratorStartRequest();
-    Serial.println("Generator start request successful");
+    // Serial.println("Generator start request successful");
     generatorStartTime = timeClient.getEpochTime();
     generatorStopTime = 0;
     return;
@@ -215,7 +221,7 @@ void generatorStartLoop() {
 
   if (generatorStartRequested) {
     if (generatorStartTries == MAX_GENERATOR_START_TRIES) {
-      Serial.println("Generator failed to start after " + (String)MAX_GENERATOR_START_TRIES + " tries, cannot start generator!");
+      // Serial.println("Generator failed to start after " + (String)MAX_GENERATOR_START_TRIES + " tries, cannot start generator!");
       return;
     }
 
@@ -239,7 +245,7 @@ void serverLoop() {
 
   // Read the first line of the request
   String req = client.readStringUntil('\r');
-  Serial.println(req);
+  // Serial.println(req);
 
   // Actions
   if (req.indexOf("/generator/on") != -1) {
@@ -287,6 +293,7 @@ void serverLoop() {
     data["bmsCommunicationStatus"] = bmsCommunicationStatus;
     data["generatorOn"] = generatorOn;
     data["gridPowerOn"] = gridPowerOn;
+    data["inverterOn"] = inverterOn;
     data["generatorStartRequested"] = generatorStartRequested;
     data["generatorStopRequested"] = generatorStopRequested;
     data["generatorStartTries"] = generatorStartTries;
@@ -361,7 +368,9 @@ void serverLoop() {
     // it is OK for multiple small client.print/write,
     // because nagle algorithm will group them into one single packet
     client.print("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n");
-    client.print(String(reinterpret_cast<char*>(site_index_min_html)));
+    client.print("<html>");
+    client.print(htmlString);
+    client.print("</html>");
   }
 
   // read/ignore the rest of the request
@@ -387,8 +396,9 @@ void loop() {
   */
 
   // Get grid and generator status
-  generatorOn = digitalRead(GENERATOR_POWER_PIN) == HIGH;
-  gridPowerOn = digitalRead(GRID_POWER_PIN) == HIGH;
+  generatorOn = digitalRead(GENERATOR_POWER_PIN) == LOW;
+  gridPowerOn = digitalRead(GRID_POWER_PIN) == LOW;
+  inverterOn = digitalRead(INVERTER_POWER_PIN) == LOW;
 
   if (gridPowerOn) {
     if (gridPowerLostTime != 0) {
@@ -397,7 +407,7 @@ void loop() {
     }
 
     if (generatorOn && !generatorStopRequested) {
-      Serial.println("Grid power restored");
+      // Serial.println("Grid power restored");
       requestStopGenerator();
     }
   }
@@ -413,13 +423,13 @@ void loop() {
       // Don't do anything if we're not communicating properly with the BMS
       if (packSOC < BATTERY_MINIMUM_SOC) {
         if (!generatorOn && !generatorStartRequested) {
-          Serial.println("Batteries need charging");
+          // Serial.println("Batteries need charging");
           requestStartGenerator();
         }
       }
       else if (packSOC == BATTERY_MAXIMUM_SOC) {
         if (generatorOn && !generatorStopRequested) {
-          Serial.println("Batteries are fully charged");
+          // Serial.println("Batteries are fully charged");
           requestStopGenerator();
         }
       }
