@@ -3,6 +3,7 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <daly-bms-uart.h>
+#include <JSON.h>
 
 #define STASSID "davisRouterLegacy"
 #define STAPSK "0192837465"
@@ -270,98 +271,94 @@ void serverLoop() {
       }
     }
 
-    client.print(F("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n"));
-    client.print(F("{"));
+    JSONVar data;
+    data["time"] = timeClient.getEpochTime();
+    data["bmsCycles"] = bms.get.bmsCycles;
+    data["packSOC"] = bms.get.packSOC;
+    data["packVoltage"] = bms.get.packVoltage;
+    data["packCurrent"] = bms.get.packCurrent;
+    data["chargeDischargeStatus"] = chargeDischargeInt;
+    data["cellBalanceActive"] = bms.get.cellBalanceActive;
+    data["resCapacitymAh"] = bms.get.resCapacitymAh; // residual capacity mAH
+    data["maxCellmV"] = bms.get.maxCellmV; // maximum monomer voltage (mV)
+    data["maxCellVNum"] = bms.get.maxCellVNum; // Maximum Unit Voltage cell No.
+    data["minCellmV"] = bms.get.minCellmV; // minimum monomer voltage (mV)
+    data["minCellVNum"] = bms.get.minCellVNum; // Minimum Unit Voltage cell No.
+    data["cellDiff"] = bms.get.cellDiff; // difference between cells
+    data["numberOfCells"] = bms.get.numberOfCells; // difference between cells
 
-    client.print(F("\"time\":")); client.print(timeClient.getEpochTime()); client.print(F(","));
-    client.print(F("\"bmsCycles\":")); client.print(bms.get.bmsCycles); client.print(F(","));
-    client.print(F("\"packSOC\":")); client.print(bms.get.packSOC); client.print(F(","));
-    client.print(F("\"packVoltage\":")); client.print(bms.get.packVoltage); client.print(F(","));
-    client.print(F("\"packCurrent\":")); client.print(bms.get.packCurrent); client.print(F(","));
-    client.print(F("\"chargeDischargeStatus\":")); client.print(chargeDischargeInt); client.print(F(","));
-    client.print(F("\"cellBalanceActive\":")); client.print(bms.get.cellBalanceActive); client.print(F(","));
-    client.print(F("\"resCapacitymAh\":")); client.print(bms.get.resCapacitymAh); client.print(F(","));
-    client.print(F("\"maxCellmV\":")); client.print(bms.get.maxCellmV); client.print(F(","));
-    client.print(F("\"maxCellVNum\":")); client.print(bms.get.maxCellVNum); client.print(F(","));
-    client.print(F("\"minCellmV\":")); client.print(bms.get.minCellmV); client.print(F(","));
-    client.print(F("\"minCellVNum\":")); client.print(bms.get.minCellVNum); client.print(F(","));
-    client.print(F("\"cellDiff\":")); client.print(bms.get.cellDiff); client.print(F(","));
-    client.print(F("\"numberOfCells\":")); client.print(bms.get.numberOfCells); client.print(F(","));
+    data["bmsCommunicationStatus"] = bmsCommunicationStatus;
+    data["generatorOn"] = generatorOn;
+    data["gridPowerOn"] = gridPowerOn;
+    data["inverterOn"] = inverterOn;
+    data["generatorStartRequested"] = generatorStartRequested;
+    data["generatorStopRequested"] = generatorStopRequested;
+    data["generatorStartTries"] = generatorStartTries;
 
-    client.print(F("\"bmsCommunicationStatus\":")); client.print(bmsCommunicationStatus); client.print(F(","));
-    client.print(F("\"generatorOn\":")); client.print(generatorOn); client.print(F(","));
-    client.print(F("\"gridPowerOn\":")); client.print(gridPowerOn); client.print(F(","));
-    client.print(F("\"inverterOn\":")); client.print(inverterOn); client.print(F(","));
-    client.print(F("\"generatorStartRequested\":")); client.print(generatorStartRequested); client.print(F(","));
-    client.print(F("\"generatorStopRequested\":")); client.print(generatorStopRequested); client.print(F(","));
-    client.print(F("\"generatorStartTries\":")); client.print(generatorStartTries); client.print(F(","));
+    data["gridPowerLostTime"] = gridPowerLostTime;
+    data["gridPowerRestoredTime"] = gridPowerRestoredTime;
+    data["generatorStartTime"] = generatorStartTime;
+    data["generatorStopTime"] = generatorStopTime;
 
-    client.print(F("\"gridPowerLostTime\":")); client.print(gridPowerLostTime); client.print(F(","));
-    client.print(F("\"gridPowerRestoredTime\":")); client.print(gridPowerRestoredTime); client.print(F(","));
-    client.print(F("\"generatorStartTime\":")); client.print(generatorStartTime); client.print(F(","));
-    client.print(F("\"generatorStopTime\":")); client.print(generatorStopTime); client.print(F(","));
-
-    client.print(F("\"cellVoltages\":["));
+    JSONVar cellVoltages;
     for (int i = 0; i < bms.get.numberOfCells; i++) {
-      client.print(bms.get.cellVmV[i]);
-      if (i != bms.get.numberOfCells - 1) {
-        client.print(F(","));
-      }
+      cellVoltages[i] = bms.get.cellVmV[i];
     }
-    client.print(F("],"));
+    data["cellVoltages"] = cellVoltages;
 
-    client.print(F("\"alarms\":{\"z\":false"));
-    if (bms.alarm.levelOneCellVoltageTooHigh) client.print(F(",\"levelOneCellVoltageTooHigh\": true"));
-    if (bms.alarm.levelTwoCellVoltageTooHigh) client.print(F(",\"levelTwoCellVoltageTooHigh\": true"));
-    if (bms.alarm.levelOneCellVoltageTooLow) client.print(F(",\"levelOneCellVoltageTooLow\": true"));
-    if (bms.alarm.levelTwoCellVoltageTooLow) client.print(F(",\"levelTwoCellVoltageTooLow\": true"));
-    if (bms.alarm.levelOnePackVoltageTooHigh) client.print(F(",\"levelOnePackVoltageTooHigh\": true"));
-    if (bms.alarm.levelTwoPackVoltageTooHigh) client.print(F(",\"levelTwoPackVoltageTooHigh\": true"));
-    if (bms.alarm.levelOnePackVoltageTooLow) client.print(F(",\"levelOnePackVoltageTooLow\": true"));
-    if (bms.alarm.levelTwoPackVoltageTooLow) client.print(F(",\"levelTwoPackVoltageTooLow\": true"));
-    if (bms.alarm.levelOneChargeTempTooHigh) client.print(F(",\"levelOneChargeTempTooHigh\": true"));
-    if (bms.alarm.levelTwoChargeTempTooHigh) client.print(F(",\"levelTwoChargeTempTooHigh\": true"));
-    if (bms.alarm.levelOneChargeTempTooLow) client.print(F(",\"levelOneChargeTempTooLow\": true"));
-    if (bms.alarm.levelTwoChargeTempTooLow) client.print(F(",\"levelTwoChargeTempTooLow\": true"));
-    if (bms.alarm.levelOneDischargeTempTooHigh) client.print(F(",\"levelOneDischargeTempTooHigh\": true"));
-    if (bms.alarm.levelTwoDischargeTempTooHigh) client.print(F(",\"levelTwoDischargeTempTooHigh\": true"));
-    if (bms.alarm.levelOneDischargeTempTooLow) client.print(F(",\"levelOneDischargeTempTooLow\": true"));
-    if (bms.alarm.levelTwoDischargeTempTooLow) client.print(F(",\"levelTwoDischargeTempTooLow\": true"));
-    if (bms.alarm.levelOneChargeCurrentTooHigh) client.print(F(",\"levelOneChargeCurrentTooHigh\": true"));
-    if (bms.alarm.levelTwoChargeCurrentTooHigh) client.print(F(",\"levelTwoChargeCurrentTooHigh\": true"));
-    if (bms.alarm.levelOneDischargeCurrentTooHigh) client.print(F(",\"levelOneDischargeCurrentTooHigh\": true"));
-    if (bms.alarm.levelTwoDischargeCurrentTooHigh) client.print(F(",\"levelTwoDischargeCurrentTooHigh\": true"));
-    if (bms.alarm.levelOneStateOfChargeTooHigh) client.print(F(",\"levelOneStateOfChargeTooHigh\": true"));
-    if (bms.alarm.levelTwoStateOfChargeTooHigh) client.print(F(",\"levelTwoStateOfChargeTooHigh\": true"));
-    if (bms.alarm.levelOneStateOfChargeTooLow) client.print(F(",\"levelOneStateOfChargeTooLow\": true"));
-    if (bms.alarm.levelTwoStateOfChargeTooLow) client.print(F(",\"levelTwoStateOfChargeTooLow\": true"));
-    if (bms.alarm.levelOneCellVoltageDifferenceTooHigh) client.print(F(",\"levelOneCellVoltageDifferenceTooHigh\": true"));
-    if (bms.alarm.levelTwoCellVoltageDifferenceTooHigh) client.print(F(",\"levelTwoCellVoltageDifferenceTooHigh\": true"));
-    if (bms.alarm.levelOneTempSensorDifferenceTooHigh) client.print(F(",\"levelOneTempSensorDifferenceTooHigh\": true"));
-    if (bms.alarm.levelTwoTempSensorDifferenceTooHigh) client.print(F(",\"levelTwoTempSensorDifferenceTooHigh\": true"));
-    if (bms.alarm.chargeFETTemperatureTooHigh) client.print(F(",\"chargeFETTemperatureTooHigh\": true"));
-    if (bms.alarm.dischargeFETTemperatureTooHigh) client.print(F(",\"dischargeFETTemperatureTooHigh\": true"));
-    if (bms.alarm.failureOfChargeFETTemperatureSensor) client.print(F(",\"failureOfChargeFETTemperatureSensor\": true"));
-    if (bms.alarm.failureOfDischargeFETTemperatureSensor) client.print(F(",\"failureOfDischargeFETTemperatureSensor\": true"));
-    if (bms.alarm.failureOfChargeFETAdhesion) client.print(F(",\"failureOfChargeFETAdhesion\": true"));
-    if (bms.alarm.failureOfDischargeFETAdhesion) client.print(F(",\"failureOfDischargeFETAdhesion\": true"));
-    if (bms.alarm.failureOfChargeFETTBreaker) client.print(F(",\"failureOfChargeFETTBreaker\": true"));
-    if (bms.alarm.failureOfDischargeFETBreaker) client.print(F(",\"failureOfDischargeFETBreaker\": true"));
-    if (bms.alarm.failureOfAFEAcquisitionModule) client.print(F(",\"failureOfAFEAcquisitionModule\": true"));
-    if (bms.alarm.failureOfVoltageSensorModule) client.print(F(",\"failureOfVoltageSensorModule\": true"));
-    if (bms.alarm.failureOfTemperatureSensorModule) client.print(F(",\"failureOfTemperatureSensorModule\": true"));
-    if (bms.alarm.failureOfEEPROMStorageModule) client.print(F(",\"failureOfEEPROMStorageModule\": true"));
-    if (bms.alarm.failureOfRealtimeClockModule) client.print(F(",\"failureOfRealtimeClockModule\": true"));
-    if (bms.alarm.failureOfPrechargeModule) client.print(F(",\"failureOfPrechargeModule\": true"));
-    if (bms.alarm.failureOfVehicleCommunicationModule) client.print(F(",\"failureOfVehicleCommunicationModule\": true"));
-    if (bms.alarm.failureOfIntranetCommunicationModule) client.print(F(",\"failureOfIntranetCommunicationModule\": true"));
-    if (bms.alarm.failureOfCurrentSensorModule) client.print(F(",\"failureOfCurrentSensorModule\": true"));
-    if (bms.alarm.failureOfMainVoltageSensorModule) client.print(F(",\"failureOfMainVoltageSensorModule\": true"));
-    if (bms.alarm.failureOfShortCircuitProtection) client.print(F(",\"failureOfShortCircuitProtection\": true"));
-    if (bms.alarm.failureOfLowVoltageNoCharging) client.print(F(",\"failureOfLowVoltageNoCharging\": true"));
-    client.print(F("}"));
-
-    client.print(F("}"));
+    JSONVar alarms;
+    if (bms.alarm.levelOneCellVoltageTooHigh) alarms["levelOneCellVoltageTooHigh"] = true;
+    if (bms.alarm.levelTwoCellVoltageTooHigh) alarms["levelTwoCellVoltageTooHigh"] = true;
+    if (bms.alarm.levelOneCellVoltageTooLow) alarms["levelOneCellVoltageTooLow"] = true;
+    if (bms.alarm.levelTwoCellVoltageTooLow) alarms["levelTwoCellVoltageTooLow"] = true;
+    if (bms.alarm.levelOnePackVoltageTooHigh) alarms["levelOnePackVoltageTooHigh"] = true;
+    if (bms.alarm.levelTwoPackVoltageTooHigh) alarms["levelTwoPackVoltageTooHigh"] = true;
+    if (bms.alarm.levelOnePackVoltageTooLow) alarms["levelOnePackVoltageTooLow"] = true;
+    if (bms.alarm.levelTwoPackVoltageTooLow) alarms["levelTwoPackVoltageTooLow"] = true;
+    if (bms.alarm.levelOneChargeTempTooHigh) alarms["levelOneChargeTempTooHigh"] = true;
+    if (bms.alarm.levelTwoChargeTempTooHigh) alarms["levelTwoChargeTempTooHigh"] = true;
+    if (bms.alarm.levelOneChargeTempTooLow) alarms["levelOneChargeTempTooLow"] = true;
+    if (bms.alarm.levelTwoChargeTempTooLow) alarms["levelTwoChargeTempTooLow"] = true;
+    if (bms.alarm.levelOneDischargeTempTooHigh) alarms["levelOneDischargeTempTooHigh"] = true;
+    if (bms.alarm.levelTwoDischargeTempTooHigh) alarms["levelTwoDischargeTempTooHigh"] = true;
+    if (bms.alarm.levelOneDischargeTempTooLow) alarms["levelOneDischargeTempTooLow"] = true;
+    if (bms.alarm.levelTwoDischargeTempTooLow) alarms["levelTwoDischargeTempTooLow"] = true;
+    if (bms.alarm.levelOneChargeCurrentTooHigh) alarms["levelOneChargeCurrentTooHigh"] = true;
+    if (bms.alarm.levelTwoChargeCurrentTooHigh) alarms["levelTwoChargeCurrentTooHigh"] = true;
+    if (bms.alarm.levelOneDischargeCurrentTooHigh) alarms["levelOneDischargeCurrentTooHigh"] = true;
+    if (bms.alarm.levelTwoDischargeCurrentTooHigh) alarms["levelTwoDischargeCurrentTooHigh"] = true;
+    if (bms.alarm.levelOneStateOfChargeTooHigh) alarms["levelOneStateOfChargeTooHigh"] = true;
+    if (bms.alarm.levelTwoStateOfChargeTooHigh) alarms["levelTwoStateOfChargeTooHigh"] = true;
+    if (bms.alarm.levelOneStateOfChargeTooLow) alarms["levelOneStateOfChargeTooLow"] = true;
+    if (bms.alarm.levelTwoStateOfChargeTooLow) alarms["levelTwoStateOfChargeTooLow"] = true;
+    if (bms.alarm.levelOneCellVoltageDifferenceTooHigh) alarms["levelOneCellVoltageDifferenceTooHigh"] = true;
+    if (bms.alarm.levelTwoCellVoltageDifferenceTooHigh) alarms["levelTwoCellVoltageDifferenceTooHigh"] = true;
+    if (bms.alarm.levelOneTempSensorDifferenceTooHigh) alarms["levelOneTempSensorDifferenceTooHigh"] = true;
+    if (bms.alarm.levelTwoTempSensorDifferenceTooHigh) alarms["levelTwoTempSensorDifferenceTooHigh"] = true;
+    if (bms.alarm.chargeFETTemperatureTooHigh) alarms["chargeFETTemperatureTooHigh"] = true;
+    if (bms.alarm.dischargeFETTemperatureTooHigh) alarms["dischargeFETTemperatureTooHigh"] = true;
+    if (bms.alarm.failureOfChargeFETTemperatureSensor) alarms["failureOfChargeFETTemperatureSensor"] = true;
+    if (bms.alarm.failureOfDischargeFETTemperatureSensor) alarms["failureOfDischargeFETTemperatureSensor"] = true;
+    if (bms.alarm.failureOfChargeFETAdhesion) alarms["failureOfChargeFETAdhesion"] = true;
+    if (bms.alarm.failureOfDischargeFETAdhesion) alarms["failureOfDischargeFETAdhesion"] = true;
+    if (bms.alarm.failureOfChargeFETTBreaker) alarms["failureOfChargeFETTBreaker"] = true;
+    if (bms.alarm.failureOfDischargeFETBreaker) alarms["failureOfDischargeFETBreaker"] = true;
+    if (bms.alarm.failureOfAFEAcquisitionModule) alarms["failureOfAFEAcquisitionModule"] = true;
+    if (bms.alarm.failureOfVoltageSensorModule) alarms["failureOfVoltageSensorModule"] = true;
+    if (bms.alarm.failureOfTemperatureSensorModule) alarms["failureOfTemperatureSensorModule"] = true;
+    if (bms.alarm.failureOfEEPROMStorageModule) alarms["failureOfEEPROMStorageModule"] = true;
+    if (bms.alarm.failureOfRealtimeClockModule) alarms["failureOfRealtimeClockModule"] = true;
+    if (bms.alarm.failureOfPrechargeModule) alarms["failureOfPrechargeModule"] = true;
+    if (bms.alarm.failureOfVehicleCommunicationModule) alarms["failureOfVehicleCommunicationModule"] = true;
+    if (bms.alarm.failureOfIntranetCommunicationModule) alarms["failureOfIntranetCommunicationModule"] = true;
+    if (bms.alarm.failureOfCurrentSensorModule) alarms["failureOfCurrentSensorModule"] = true;
+    if (bms.alarm.failureOfMainVoltageSensorModule) alarms["failureOfMainVoltageSensorModule"] = true;
+    if (bms.alarm.failureOfShortCircuitProtection) alarms["failureOfShortCircuitProtection"] = true;
+    if (bms.alarm.failureOfLowVoltageNoCharging) alarms["failureOfLowVoltageNoCharging"] = true;
+    data["alarms"] = alarms;
+    
+    client.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n");
+    client.print(JSON.stringify(data));
   }
   else {
     // Send the response to the client
