@@ -1,26 +1,29 @@
-#include "site/html.h"
+#include <daly-bms-uart.h>
 #include <ESP8266WiFi.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
-#include <daly-bms-uart.h>
 #include <JSON.h>
+#include "site/html.h"
 
 #define STASSID "davisRouterLegacy"
 #define STAPSK "0192837465"
 #define UTCOFFSETINSECONDS 8 * -3600
 
 #define BMS_SERIAL Serial // Set the serial port for communication with the Daly BMS
+#define SERIAL_DEBUG false
 
-#define GENERATOR_SIGNAL_PIN 5
-#define INVERTER_POWER_PIN 14
-#define GRID_POWER_PIN 12
-#define GENERATOR_POWER_PIN 13
+#define GENERATOR_SIGNAL_PIN 5 // D1 Yellow
+#define INVERTER_POWER_PIN 14 // D5 Blue
+#define GRID_POWER_PIN 12 // D6 Orange
+#define GENERATOR_POWER_PIN 13 // D7 Green
 
 #define MAX_GENERATOR_START_TRIES 2
 
 #define GENERATOR_START_RETRY_TIME 30000 // 0.5 * 60 * 100 // 30 seconds
 #define GENERATOR_COOLDOWN_TIME 300000 // 300000 // 5 * 60 * 1000 // 5 minutes
 #define SIGNAL_TIME 2000
+
+#define BMS_UPDATE_INTERVAL 1000
 
 #define BATTERY_MINIMUM_SOC 15 // 15%
 #define BATTERY_MAXIMUM_SOC 100 // 100%
@@ -59,10 +62,15 @@ unsigned long gridPowerLostTime = 0;
 unsigned long gridPowerRestoredTime = 0;
 unsigned long generatorStartTime = 0;
 unsigned long generatorStopTime = 0;
+unsigned long bmsUpdateTime = 0;
 
 char* htmlChars = reinterpret_cast<char*>(site_index_min_html);
 
 void setup() {
+  if (SERIAL_DEBUG) {
+    Serial.begin(115200);
+  }
+
   // Pin setup
   pinMode(GENERATOR_SIGNAL_PIN, OUTPUT);
   pinMode(INVERTER_POWER_PIN, INPUT_PULLUP);
@@ -71,8 +79,10 @@ void setup() {
 
   pinMode(LED_BUILTIN, OUTPUT);
 
-  // Serial.print("Connecting to ");
-  // Serial.println(ssid);
+  if (SERIAL_DEBUG) {
+    Serial.print("Connecting to ");
+    Serial.println(ssid);
+  }
 
   WiFi.mode(WIFI_STA);
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
@@ -80,10 +90,15 @@ void setup() {
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    // Serial.print(".");
+    if (SERIAL_DEBUG) {
+      Serial.print(".");
+    }
   }
-  // Serial.println();
-  // Serial.println("WiFi connected");
+
+  if (SERIAL_DEBUG) {
+    Serial.println();
+    Serial.println("WiFi connected");
+  }
 
   // Update the time
   timeClient.begin();
@@ -91,10 +106,11 @@ void setup() {
 
   // Start the server
   server.begin();
-  // Serial.println("Server started");
-
-  // Print the IP address
-  // Serial.println(WiFi.localIP());
+ 
+  if (SERIAL_DEBUG) {
+    Serial.println("Server started");
+    Serial.println(WiFi.localIP());
+  }
 
   // This call sets up the driver
   bms.Init();
@@ -233,7 +249,7 @@ void serverLoop() {
     return;
   }
 
-  client.setTimeout(2000);  // default is 1000
+  client.setTimeout(1000);
 
   // Read the first line of the request
   String req = client.readStringUntil('\r');
@@ -258,26 +274,13 @@ void serverLoop() {
       cancelGeneratorStartRequest();
     }
 
-    int chargeDischargeInt = -1;
-    if (bmsCommunicationStatus) {
-      if (bms.get.chargeDischargeStatus == "1") {
-        chargeDischargeInt = 1;
-      }
-      else if (bms.get.chargeDischargeStatus == "2") {
-        chargeDischargeInt = 2;
-      }
-      else {
-        chargeDischargeInt = 0;
-      }
-    }
-
     JSONVar data;
     data["time"] = timeClient.getEpochTime();
     data["bmsCycles"] = bms.get.bmsCycles;
     data["packSOC"] = bms.get.packSOC;
     data["packVoltage"] = bms.get.packVoltage;
     data["packCurrent"] = bms.get.packCurrent;
-    data["chargeDischargeStatus"] = chargeDischargeInt;
+    data["chargeDischargeStatus"] = bms.get.chargeDischargeStatus;
     data["cellBalanceActive"] = bms.get.cellBalanceActive;
     data["resCapacitymAh"] = bms.get.resCapacitymAh; // residual capacity mAH
     data["maxCellmV"] = bms.get.maxCellmV; // maximum monomer voltage (mV)
@@ -372,9 +375,37 @@ void serverLoop() {
   client.flush();
 }
 
+bool bmsLoop() {
+  if (millis() - bmsUpdateTime > BMS_UPDATE_INTERVAL) {
+    bmsUpdateTime = millis();
+    if (!bms.getPackMeasurements()) {
+      return false;
+    }
+    if (!bms.getMinMaxCellVoltage()) {
+      return false;
+    }
+    if (!bms.getPackTemp()) {
+      return false;
+    }
+    if (!bms.getDischargeChargeMosStatus()) {
+      return false;
+    }
+    if (!bms.getStatusInfo()) {
+      return false;
+    }
+    if (!bms.getCellVoltages()) {
+      return false;
+    }
+    if (!bms.getFailureCodes()) {
+      return false;
+    }
+  }  
+  return true;
+}
+
 void loop() {
   // Get BMS data
-  bmsCommunicationStatus = bms.update();
+  bmsCommunicationStatus = bmsLoop();
 
   // Get grid and generator status
   generatorOn = digitalRead(GENERATOR_POWER_PIN) == LOW;
