@@ -17,10 +17,10 @@
 #define GRID_POWER_PIN 12 // D6 Orange
 #define GENERATOR_POWER_PIN 13 // D7 Green
 
-#define MAX_GENERATOR_START_TRIES 2
+#define MAX_GENERATOR_START_TRIES 5
 
 #define GENERATOR_START_RETRY_TIME 30000 // 0.5 * 60 * 100 // 30 seconds
-#define GENERATOR_COOLDOWN_TIME 300000 // 300000 // 5 * 60 * 1000 // 5 minutes
+#define GENERATOR_COOLDOWN_TIME 120000 // 120000 // 2 * 60 * 1000 // 5 minutes
 #define SIGNAL_TIME 2000
 
 #define BMS_UPDATE_INTERVAL 1000
@@ -100,6 +100,9 @@ void setup() {
     Serial.println("WiFi connected");
   }
 
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
+
   // Update the time
   timeClient.begin();
   timeClient.update();
@@ -122,7 +125,7 @@ bool pressStartStopButton() {
   }
 
   startStopButtonPressed = true;
-  digitalWrite(GENERATOR_SIGNAL_PIN, LED_ON); // Press the button  
+  digitalWrite(GENERATOR_SIGNAL_PIN, HIGH); // Press the button  
   signalStartTime = millis();
 
   return true;
@@ -154,6 +157,7 @@ bool stopGenerator() {
   generatorStopRequested = false;
 
   generatorStartTime = 0;
+  generatorStartTries = 0;
   generatorStopTime = timeClient.getEpochTime();
 
   return true;
@@ -187,7 +191,7 @@ bool requestStartGenerator() {
 void startStopButtonLoop() {
   if (startStopButtonPressed) {
     if ((millis() - signalStartTime) >= SIGNAL_TIME) {
-      digitalWrite(GENERATOR_SIGNAL_PIN, LED_OFF); // Release the button 
+      digitalWrite(GENERATOR_SIGNAL_PIN, LOW); // Release the button 
       startStopButtonPressed = false; 
     }
   }
@@ -268,8 +272,10 @@ void serverLoop() {
     // Actions
     if (req.indexOf("/api/generator/on") != -1) {
       requestStartGenerator();
-    } else if (req.indexOf("/api/generator/off") != -1) {
+    } else if (req.indexOf("/api/generator/cooldown") != -1) {
       requestStopGenerator();
+    } else if (req.indexOf("/api/generator/off") != -1) {
+      stopGenerator();
     } else if (req.indexOf("/api/generator/cancel") != -1) {
       cancelGeneratorStartRequest();
     }
@@ -289,6 +295,7 @@ void serverLoop() {
     data["minCellVNum"] = bms.get.minCellVNum; // Minimum Unit Voltage cell No.
     data["cellDiff"] = bms.get.cellDiff; // difference between cells
     data["numberOfCells"] = bms.get.numberOfCells; // difference between cells
+    data["tempAverage"] = bms.get.tempAverage;
 
     data["bmsCommunicationStatus"] = bmsCommunicationStatus;
     data["generatorOn"] = generatorOn;
