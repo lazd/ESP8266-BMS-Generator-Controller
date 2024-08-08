@@ -1,11 +1,11 @@
 mkdir -p site
-cp ../hybrid-generator-site/index.html site/index.html
+cp ../ESP8266-BMS-Generator-Controller-Site/index.html site/index.html
 
 sed -i '' '/<script src="index.js"><\/script>/{
     s/<script src="index.js"><\/script>//g
     a\
     <script>
-    r ../hybrid-generator-site/index.js
+    r ../ESP8266-BMS-Generator-Controller-Site/index.js
     a\
     </script>
 }' site/index.html
@@ -14,7 +14,7 @@ sed -i '' '/<link rel="stylesheet" href="index.css">/{
     s/<link rel="stylesheet" href="index.css">//g
     a\
     <style>
-    r ../hybrid-generator-site/index.css
+    r ../ESP8266-BMS-Generator-Controller-Site/index.css
     a\
     </style>
 }' site/index.html

@@ -366,6 +366,9 @@ void serverLoop() {
     if (bms.alarm.failureOfShortCircuitProtection) alarms["failureOfShortCircuitProtection"] = true;
     if (bms.alarm.failureOfLowVoltageNoCharging) alarms["failureOfLowVoltageNoCharging"] = true;
     data["alarms"] = alarms;
+
+    // Run time based on 95% capacity
+    data["runTimeHours"] = bms.get.resCapacitymAh / bms.get.packCurrent / 1000 * 0.95;
     
     client.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n");
     client.print(JSON.stringify(data));
